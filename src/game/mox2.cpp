@@ -257,6 +257,62 @@ namespace MOX2 {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "mox2: Set_Mox_Language complete language=%d", (int)MOX::settings.language);
     }
 
+    // LOOK TEST (local patch, not upstream). With ORION2RE_LOOK_TEST set, skip the menus: start an all-computer
+    // game, give two sides one fleet each covering every hull size from frigate to titan, and send them into a
+    // single tactical battle. Both sides are computer players, so the ship AI plays the battle out on screen.
+    static void Run_Look_Test_Battle_() {
+        MOX::game_type = 0;
+        RUSS::all_ai_game = 1;
+        memset(MOX::player, 0, MAX_PLAYERS * sizeof(*MOX::player));
+        MOX::settings.strategic_combat_flag = 0;
+        MOX::settings.auto_saves = 0;
+        MOX::cmd_line_seed = 1;
+        if (!INITGAME::Init_New_Game(MOX::settings.game_difficulty, MOX::settings.galaxy_size, MOX::settings.galaxy_age, MOX::settings.number_of_players, 0, STARTING_CIVILIZATION_LEVEL_ADVANCED)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "look test: new-game initialization failed");
+            return;
+        }
+        BILL::Cache_Player_Scientist_Anim();
+        if (MOX::NUM_NEBULAS != 0) MAPGEN::Load_Nebula_Pictures();
+        HAROLD::Load_Leader_Titles();
+        CONFIG_REFRESH::Reload_Resources_Between_Screens();
+
+        // Hand the galaxy's starting ships to players 0 and 1 alternately and refit each as a warship,
+        // cycling through the five hull sizes that have their own combat pictures.
+        constexpr int kShipsPerSide = 10;
+        int16_t fleet[2][kShipsPerSide];
+        int16_t fleet_count[2] = {0, 0};
+        int16_t star_idx = -1;
+        for (int16_t i = 0; i < MOX::NUM_SHIPS; ++i) {
+            s_ship_data* ship = &MOX::ship[i];
+            if (ship->owner < 0 || ship->owner >= MOX::NUM_PLAYERS) continue;
+            const int side = fleet_count[0] <= fleet_count[1] ? 0 : 1;
+            if (fleet_count[side] >= kShipsPerSide) continue;
+            if (star_idx < 0) star_idx = ship->location;
+            ship->owner = static_cast<int8_t>(side);
+            INITSHIP::Auto_Strategic_Design_Ship(static_cast<int16_t>(side), static_cast<int16_t>(fleet_count[side] % 5), &ship->d);
+            INITSHIP::Repair_Ship_Full(i);
+            fleet[side][fleet_count[side]++] = i;
+        }
+        // ORION2RE_LOOK_TEST=play hands the first fleet to the person at the keyboard; anything else leaves both
+        // sides to the computer.
+        const char* look_test_mode = SDL_getenv("ORION2RE_LOOK_TEST");
+        if (look_test_mode != nullptr && SDL_strcmp(look_test_mode, "play") == 0) {
+            RUSS::all_ai_game = 0;
+            MOX::PLAYER_NUM = 0;
+            MOX::player[0].objectives = PLAYER_OBJECTIVE_HUMAN;
+            MOX::cur_plyr_ptr = &MOX::player[0];
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "look test: player 0 is under human control");
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "look test: %d ships against %d at star %d (players %d, ships %d)",
+            (int)fleet_count[0], (int)fleet_count[1], (int)star_idx, (int)MOX::NUM_PLAYERS, (int)MOX::NUM_SHIPS);
+        if (fleet_count[0] == 0 || fleet_count[1] == 0 || star_idx < 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "look test: not enough ships to stage a battle");
+            return;
+        }
+        const int16_t result = COMBINIT::Tactical_Combat(fleet[0], fleet_count[0], fleet[1], fleet_count[1], star_idx, -1, 0);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "look test: battle finished with result %d", (int)result);
+    }
+
     void __cdecl main2() {
         char font_file[16];
         char loading_buffer[66];
@@ -381,6 +437,11 @@ namespace MOX2 {
             return;
         }
 #endif
+
+        if (SDL_getenv("ORION2RE_LOOK_TEST") != nullptr) {
+            Run_Look_Test_Battle_();
+            return;
+        }
 
         if (MOX2::quick_start != 0) {
             s_player* player = &MOX::player[MOX::PLAYER_NUM];

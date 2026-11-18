@@ -1343,3 +1343,13 @@ if(ORION2RE_BUILD_TESTS)
         endforeach()
     endif()
 endif()
+# LOOK TEST (local patch, not upstream): an embedded JavaScript engine (QuickJS-ng, checked out beside this
+# repository) so the game can run ink studio itself and author its splat ships at load.
+if(TARGET orion2re_game_objects AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../quickjs-ng/CMakeLists.txt")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../quickjs-ng" "${CMAKE_CURRENT_BINARY_DIR}/quickjs-ng" EXCLUDE_FROM_ALL)
+    target_link_libraries(orion2re_game_objects PRIVATE qjs)
+    target_compile_definitions(orion2re_game_objects PRIVATE ORION2RE_LOOK_TEST_JS=1)
+    if(TARGET orion2re)
+        target_link_libraries(orion2re PRIVATE qjs)
+    endif()
+endif()

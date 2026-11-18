@@ -1,5 +1,7 @@
 #include "pch.h"
 
+#include "game/battle_cam.h"
+
 #include "config/config_runtime.h"
 #include "game/scalers/scaler.h"
 
@@ -112,6 +114,21 @@ namespace platform {
             }
         }
 
+        bool g_look_test_right_held = false;      // LOOK TEST: right button down during a battle, not yet passed on
+        float g_look_test_right_from_x = 0.0f;    // where the pointer was in the window when the drag began
+        float g_look_test_right_from_y = 0.0f;
+        bool g_look_test_pan_key[4] = {};         // W, A, S, D held
+        bool g_look_test_map_drag = false;        // left button went down on the minimap and is still held
+        // Mouse movement arrives in window pixels; the camera works in the game's 640 by 480.
+        float Look_Test_Game_Pixels_Per_Window_Pixel() {
+            int32_t window_width = 0, window_height = 0;
+            if (g_sdl_window != nullptr) {
+                SDL_GetWindowSize(g_sdl_window, &window_width, &window_height);
+            }
+            return window_width > 0 ? (float)video::g_screen_res_x / (float)window_width : 1.0f;
+        }
+        float g_look_test_right_travel = 0.0f;    // how far the mouse has moved since
+
         void Forward_Game_Mouse_State(int16_t x, int16_t y, uint16_t buttons, bool overlay_captures_mouse) {
             if (overlay_captures_mouse) {
                 g_game_mouse_suppressed = true;
@@ -127,6 +144,9 @@ namespace platform {
                 }
                 g_game_mouse_suppressed = false;
             }
+            // LOOK TEST: over a turned battlefield, the game is told the field position under the cursor. The
+            // cursor itself is still drawn where the mouse is.
+            battle_cam::Map_Pointer(&x, &y);
 
             g_game_mouse_buttons = buttons;
             Enqueue_Mouse_Input_Event(x, y, buttons);
@@ -946,6 +966,30 @@ namespace platform {
                 return;
             }
 
+            // LOOK TEST (local patch, not upstream): with ORION2RE_LOOK_TEST_SHOTS naming a folder, save the
+            // presented 640 by 480 frame there about once a second, before the cursor is drawn on it.
+            if (const char* shot_dir = SDL_getenv("ORION2RE_LOOK_TEST_SHOTS")) {
+                // ORION2RE_LOOK_TEST_SHOT_PLAN is "first-ms,interval-ms,count"; the default is one a second.
+                static Uint64 next_shot_at = 0;
+                static int shot_count = 0, shot_interval = 1000, shot_limit = 90;
+                static bool planned = false;
+                if (!planned) {
+                    planned = true;
+                    int first = 0;
+                    if (const char* plan = SDL_getenv("ORION2RE_LOOK_TEST_SHOT_PLAN")) {
+                        (void)sscanf(plan, "%d,%d,%d", &first, &shot_interval, &shot_limit);
+                    }
+                    next_shot_at = SDL_GetTicks() + (Uint64)first;
+                }
+                const Uint64 now = SDL_GetTicks();
+                if (now >= next_shot_at && shot_count < shot_limit) {
+                    char shot_path[600];
+                    snprintf(shot_path, sizeof(shot_path), "%s/shot-%03d.bmp", shot_dir, shot_count++);
+                    (void)SDL_SaveBMP(g_sdl_present_argb_surface, shot_path);
+                    next_shot_at = now + (Uint64)shot_interval;
+                }
+            }
+
             Blit_Cursor_On_Present_Surface();
             if (!scalers::Process(
                     &g_present_scaler_pipeline,
@@ -1038,7 +1082,7 @@ namespace platform {
             if ((sdl_buttons & SDL_BUTTON_LMASK) != 0) {
                 mapped_buttons |= 1;
             }
-            if ((sdl_buttons & SDL_BUTTON_RMASK) != 0) {
+            if ((sdl_buttons & SDL_BUTTON_RMASK) != 0 && !g_look_test_right_held) { // LOOK TEST: a held-back right press is not the game's
                 mapped_buttons |= 2;
             }
 
@@ -1349,6 +1393,36 @@ namespace platform {
             if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
                 const bool overlay_captures_keyboard =
                     debug_overlay::Handle_Key_Event(event.key, g_sdl_window);
+                // LOOK TEST: during a battle W, A, S and D slide the battlefield camera and do not reach the game,
+                // so its Wait, Auto, Scan and Done buttons no longer answer to those keys (they still take clicks).
+                {
+                    int32_t pan_key = -1;
+                    switch (event.key.scancode) {
+                        case SDL_SCANCODE_W: pan_key = 0; break;
+                        case SDL_SCANCODE_A: pan_key = 1; break;
+                        case SDL_SCANCODE_S: pan_key = 2; break;
+                        case SDL_SCANCODE_D: pan_key = 3; break;
+                        default: break;
+                    }
+                    // Space stands in for the D key the camera took: the game sees "d", which is its Done button.
+                    if (event.key.scancode == SDL_SCANCODE_SPACE && battle_cam::Active() && !overlay_captures_keyboard) {
+                        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+                            SDL_KeyboardEvent done_key = event.key;
+                            done_key.key = SDLK_D;
+                            done_key.scancode = SDL_SCANCODE_D;
+                            done_key.raw = 0x20; // the D key's hardware scan code, which the game folds into its key code
+                            done_key.mod = SDL_KMOD_NONE;
+                            Handle_SDL_Key_Down(done_key);
+                        }
+                        continue;
+                    }
+                    if (pan_key >= 0 && !overlay_captures_keyboard && (battle_cam::Active() || g_look_test_pan_key[pan_key])) {
+                        g_look_test_pan_key[pan_key] = event.type == SDL_EVENT_KEY_DOWN && battle_cam::Active();
+                        battle_cam::Set_Pan_Keys((g_look_test_pan_key[3] ? 1 : 0) - (g_look_test_pan_key[1] ? 1 : 0),
+                            (g_look_test_pan_key[2] ? 1 : 0) - (g_look_test_pan_key[0] ? 1 : 0));
+                        continue;
+                    }
+                }
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F10) {
                     Request_Present_Refresh();
                     Sync_Mouse_State_From_SDL();
@@ -1373,6 +1447,28 @@ namespace platform {
                 Get_Raw_Screen_Resolution(&raw_width, &raw_height);
 
                 Set_Present_Mouse_Position(mouse_x, mouse_y);
+                // LOOK TEST: dragging with the right button turns and tips the battlefield camera; dragging with the
+                // middle button grabs the battlefield and slides it
+                if (g_look_test_right_held) {
+                    const float scale = Look_Test_Game_Pixels_Per_Window_Pixel();
+                    g_look_test_right_travel += (fabsf(event.motion.xrel) + fabsf(event.motion.yrel)) * scale;
+                    if (g_look_test_right_travel > battle_cam::kDragThreshold) {
+                        battle_cam::Orbit(event.motion.xrel * scale, event.motion.yrel * scale);
+                    }
+                    continue; // the pointer is held still for the length of the drag
+                }
+                if (g_look_test_map_drag) {
+                    // dragging on the minimap slides the camera along with the pointer
+                    if ((event.motion.state & SDL_BUTTON_LMASK) != 0) {
+                        battle_cam::Centre_From_Minimap((float)mouse_x, (float)mouse_y);
+                    } else {
+                        g_look_test_map_drag = false;
+                    }
+                }
+                if ((event.motion.state & SDL_BUTTON_MMASK) != 0 && battle_cam::Active()) {
+                    const float scale = Look_Test_Game_Pixels_Per_Window_Pixel();
+                    battle_cam::Pan(event.motion.xrel * scale, event.motion.yrel * scale);
+                }
                 const bool overlay_captures_mouse = debug_overlay::Handle_Mouse_Position(
                     mouse_x,
                     mouse_y,
@@ -1388,6 +1484,16 @@ namespace platform {
                 uint16_t mouse_buttons = g_sdl_mouse_buttons;
 
                 if (event.button.button == SDL_BUTTON_LEFT) {
+                    // LOOK TEST: a press on the minimap starts a camera drag; the click still reaches the game
+                    {
+                        int16_t map_x = 0;
+                        int16_t map_y = 0;
+                        Map_Window_Point_To_Game_Point(event.button.x, event.button.y, &map_x, &map_y);
+                        g_look_test_map_drag = event.button.down && battle_cam::On_Minimap((float)map_x, (float)map_y);
+                        if (g_look_test_map_drag) {
+                            battle_cam::Centre_From_Minimap((float)map_x, (float)map_y);
+                        }
+                    }
                     if (event.button.down) {
                         mouse_buttons |= 1;
                     } else {
@@ -1395,6 +1501,36 @@ namespace platform {
                     }
                 }
 
+                // LOOK TEST: during a battle the right button drags the camera. The game uses right clicks too, so
+                // the press is held back: a release without a drag is passed on as an ordinary right click, a drag
+                // never reaches the game, and Shift with a right click puts the camera back to straight down.
+                if (event.button.button == SDL_BUTTON_RIGHT && (battle_cam::Active() || g_look_test_right_held)) {
+                    int16_t click_x = 0;
+                    int16_t click_y = 0;
+                    Map_Window_Point_To_Game_Point(event.button.x, event.button.y, &click_x, &click_y);
+                    Set_Present_Mouse_Position(click_x, click_y);
+                    if (event.button.down) {
+                        g_look_test_right_held = true;
+                        g_look_test_right_travel = 0.0f;
+                        // hold the pointer in place while the camera turns, so it does not wander across the window
+                        g_look_test_right_from_x = event.button.x;
+                        g_look_test_right_from_y = event.button.y;
+                        (void)SDL_SetWindowRelativeMouseMode(g_sdl_window, true);
+                    } else if (g_look_test_right_held) {
+                        g_look_test_right_held = false;
+                        (void)SDL_SetWindowRelativeMouseMode(g_sdl_window, false);
+                        SDL_WarpMouseInWindow(g_sdl_window, g_look_test_right_from_x, g_look_test_right_from_y);
+                        Map_Window_Point_To_Game_Point(g_look_test_right_from_x, g_look_test_right_from_y, &click_x, &click_y);
+                        Set_Present_Mouse_Position(click_x, click_y);
+                        if ((SDL_GetModState() & SDL_KMOD_SHIFT) != 0) {
+                            battle_cam::Reset();
+                        } else if (g_look_test_right_travel <= battle_cam::kDragThreshold) {
+                            Forward_Game_Mouse_State(click_x, click_y, (uint16_t)(g_sdl_mouse_buttons | 2u), false);
+                            Forward_Game_Mouse_State(click_x, click_y, (uint16_t)(g_sdl_mouse_buttons & ~2u), false);
+                        }
+                    }
+                    continue;
+                }
                 if (event.button.button == SDL_BUTTON_RIGHT) {
                     if (event.button.down) {
                         mouse_buttons |= 2;
@@ -1434,6 +1570,14 @@ namespace platform {
                     wheel_y = -wheel_y;
                 }
                 const bool overlay_captures_mouse = debug_overlay::Handle_Mouse_Wheel(wheel_x, wheel_y);
+                // LOOK TEST: the wheel zooms the battlefield camera instead of reaching the game
+                if (!overlay_captures_mouse && battle_cam::Active()) {
+                    int16_t zoom_x = 0;
+                    int16_t zoom_y = 0;
+                    Map_Window_Point_To_Game_Point(event.wheel.mouse_x, event.wheel.mouse_y, &zoom_x, &zoom_y);
+                    battle_cam::Zoom(wheel_y, (float)zoom_x + 0.5f, (float)zoom_y + 0.5f);
+                    continue;
+                }
                 if (!overlay_captures_mouse) {
                     int16_t mouse_x = 0;
                     int16_t mouse_y = 0;
@@ -1483,6 +1627,9 @@ namespace platform {
 
     void Force_Cursor_Pos(int16_t x, int16_t y) {
         Set_Logical_Mouse_Position(x, y);
+        // LOOK TEST: the game asks for a place on the flat battlefield; the cursor goes to where that place is on
+        // screen under the battlefield camera.
+        battle_cam::Field_To_Screen(&x, &y);
         Set_Present_Mouse_Position(x, y);
 
         if (g_sdl_window != nullptr) {
@@ -1507,6 +1654,11 @@ namespace platform {
     void __cdecl Set_Logical_Mouse_Position(int16_t x, int16_t y) {
         g_mouse_x = x;
         g_mouse_y = y;
+        // LOOK TEST: under a turned battlefield camera this is a position on the flat field, not on screen. The
+        // cursor is drawn where the mouse really is, which the window's mouse events have already recorded.
+        if (battle_cam::Remaps_Pointer(y)) {
+            return;
+        }
         Set_Present_Mouse_Position(x, y);
     }
 

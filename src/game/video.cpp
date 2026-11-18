@@ -1,5 +1,7 @@
 #include "pch.h"
 
+#include "game/battle_cam.h"
+
 #include "video_scan_bounds.h"
 
 namespace video {
@@ -157,6 +159,7 @@ namespace video {
 
         const size_t page_size = (size_t)video::g_screen_res_x * (size_t)video::g_screen_res_y;
         memcpy(g_page_published.pixels, g_page_off.pixels, page_size);
+        battle_cam::Compose(g_page_published.pixels, video::g_screen_res_x); // LOOK TEST: only the shown copy is changed
         if (g_palette_mutex != nullptr) {
             SDL_LockMutex(g_palette_mutex);
         }

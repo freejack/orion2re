@@ -1,5 +1,8 @@
 #include "pch.h"
 
+#include "game/battle_cam.h"
+#include "game/splat_ship.h"
+
 namespace CMBTDRW1 {
     enum class Combat_View_Subject {
         Strategic_Ship,
@@ -38,6 +41,24 @@ namespace CMBTDRW1 {
     s_animation_header* board_raid_button_seg;
     s_animation_header* board_left_button_seg;
     s_animation_header* board_right_button_seg;
+
+    // LOOK TEST (local patch, not upstream): ships drawn live from splats (see splat_ship.cpp).
+    // While a ship turns, look_test_turn_offset is how far it is shown from its facing, in 22.5 degree facing
+    // steps (any fraction, positive counter-clockwise), and look_test_roll is how far it banks, in radians.
+    // Both are zero whenever the ship is not mid-turn.
+    float look_test_turn_offset[MAX_COMBAT_SHIPS];
+    float look_test_roll[MAX_COMBAT_SHIPS];
+
+    bool Look_Test_Smooth_Turns(int16_t ship_idx) {
+        return splat_ship::Covers(ship_idx);
+    }
+
+    // Draws the ship at its current orientation into MOX::draw_ship_bitmap. Returns false for a ship that has no
+    // splat model, which then takes the original mirrored-sprite path.
+    static bool Draw_Fine_Heading_Frame_(s_animation_header*, int16_t ship_idx, int16_t engine_step) {
+        const float heading = ((float)MOX::combat_data[ship_idx].facing_dir + look_test_turn_offset[ship_idx]) * (3.14159265358979f / 8.0f);
+        return splat_ship::Draw(ship_idx, engine_step, heading, look_test_roll[ship_idx], 0.0f, MOX::draw_ship_bitmap);
+    }
 
     static void Draw_Animation_Speed() {
         if (!timer::Animation_Speed_Change_Is_Visible()) {
@@ -357,6 +378,13 @@ namespace CMBTDRW1 {
 
             uint8_t color = (MOX::in_nebula_flag == 1) ? 0 : 0x81 /* 129 */;
 
+            // LOOK TEST: with the battlefield camera on, the highlight is not painted into the game's own window
+            // here. The camera lays it on the field for the whole battlefield, from the same grid.
+            if (battle_cam::Active()) {
+                battle_cam::Set_Move_Highlight(true, box_size, color);
+                return;
+            }
+
             for (int16_t x = MOX::cur_combat_x; x < MOX::cur_combat_x + COMBAT_GRID_VIEW_WIDTH; ++x) {
                 for (int16_t y = MOX::cur_combat_y; y < MOX::cur_combat_y + COMBAT_GRID_VIEW_HEIGHT; ++y) {
                     if (MOX::combat_grid[x][y] == 2000 /* 0x7D0 */) {
@@ -488,6 +516,7 @@ namespace CMBTDRW1 {
             animate::Draw(MOX::combat_far_x, MOX::combat_far_y - 480, MOX::combat_far_star);
             RUSS::Mox_Update();
 
+            battle_cam::Set_Move_Highlight(false, 0, 0); // LOOK TEST: off unless it is drawn just below
             if (MOX::draw_legal_boxes_flag == 1 && MOX::cur_ship > -1) {
                 int8_t owner = MOX::combat_data[MOX::cur_ship].owner;
                 if (owner < MAX_PLAYERS && MOX::player[owner].objectives == PLAYER_OBJECTIVE_HUMAN) {
@@ -617,6 +646,7 @@ namespace CMBTDRW1 {
 
         if (MOX::apply_damage_to_planet == 0) return;
         if (MOX::super_fast_flag != 0) return;
+        battle_cam::Begin_Field_Frame(); // LOOK TEST: every ship is about to be drawn again
 
         int16_t ptr_x = mouse::Pointer_X();
         int16_t ptr_y = mouse::Pointer_Y();
@@ -665,6 +695,8 @@ namespace CMBTDRW1 {
                 } else if (grid_y > COMBAT_GRID_VIEW_MAX_Y) {
                     grid_y = COMBAT_GRID_VIEW_MAX_Y;
                 }
+                // LOOK TEST: the floor cursor marks the same square the game would send this ship to
+                battle_cam::Set_Floor_Cursor(grid_x * 20, grid_y * 20, size_class == 0 ? 20 : size_class > 2 ? 60 : 40);
 
                 if (MOX::combat_grid[grid_x + MOX::cur_combat_x][grid_y + MOX::cur_combat_y] == 2000 &&
                     MOX::skan_flag == 0 &&
@@ -815,6 +847,17 @@ namespace CMBTDRW1 {
                 if (MOX::combat_data[i].unit_status == 0 && MOX::dont_draw_ship != i) {
                     if (Ship_On_Screen(i)) {
                         Draw_Ship(i, (MOX::combat_data[i].x - MOX::cur_combat_x) * 20, (MOX::combat_data[i].y - MOX::cur_combat_y) * 20);
+                    } else if (i > 0 && MOX::combat_data[i].special_status_flag != 4 && battle_cam::Active() && splat_ship::Covers(i)) {
+                        // LOOK TEST: the game only draws the ships inside its own window. The battlefield camera can see
+                        // the whole field, so the rest (other than cloaked ones) are handed to it where they stand.
+                        int16_t x_offset, y_offset;
+                        Get_Draw_Ship_Offsets(i, &x_offset, &y_offset);
+                        const int16_t step_lookup[4] = {1, 2, 3, 2};
+                        const bool engines_running = CMBTFIR2::Combat_Ship_Done(i) == 0 && MOX::combat_data[i].is_captured == 0;
+                        (void)battle_cam::Add_Ship(i, static_cast<int16_t>((MOX::combat_data[i].x - MOX::cur_combat_x) * 20 + x_offset + 29),
+                            static_cast<int16_t>((MOX::combat_data[i].y - MOX::cur_combat_y) * 20 + y_offset + 30),
+                            engines_running ? step_lookup[((MOX::ship_frame / 2) + i) % 4] : int16_t{0},
+                            (float)MOX::combat_data[i].facing_dir * (3.14159265358979f / 8.0f), 0.0f);
                     }
                 }
             }
@@ -1135,6 +1178,11 @@ namespace CMBTDRW1 {
     }
 
     void __cdecl Draw_Reduced_Map_Box() {
+        // LOOK TEST: with the battlefield camera on, the view is whatever the camera sees, and it moves every frame.
+        // The camera draws its own outline on the minimap as each frame is shown, so nothing is drawn here.
+        if (battle_cam::Active()) {
+            return;
+        }
         if (MOX::combat_grid_height != ORIGINAL_COMBAT_GRID_HEIGHT) {
             const int16_t left = 499 + MOX::cur_combat_x * 3 / 2;
             const int16_t top = 363 + MOX::cur_combat_y * 102 / MOX::combat_grid_height;
@@ -1360,7 +1408,10 @@ namespace CMBTDRW1 {
 
         memset(MOX::combat_grid, 0xff, sizeof(MOX::combat_grid));
 
-        CMBTDRW1::Detailed_View_Ship(-1);
+        {
+            battle_cam::Popup_Scope look_test_popup; // LOOK TEST: the scan result is a window, not part of the field
+            CMBTDRW1::Detailed_View_Ship(-1);
+        }
         COMBAT1::Add_Tactical_Combat_Fields();
         COMBAT1::Assign_Combat_Grids(MOX::cur_ship);
         CMBTDRW1::Refresh_Combat_Screen_Full();
@@ -1368,6 +1419,7 @@ namespace CMBTDRW1 {
     }
 
     int16_t __cdecl Board_Popup(int16_t min_val, int16_t max_val, char* msg, int16_t* out_val) {
+        battle_cam::Popup_Scope look_test_popup; // LOOK TEST: the boarding prompt is a window, not part of the field
         int16_t result = 1;
         int16_t done = 0;
 
@@ -1723,6 +1775,10 @@ namespace CMBTDRW1 {
         int32_t dir_group = (facing_dir - 1) / 4;
         if (dir_group <= 0) {
             dir_group = 0;
+        }
+        // LOOK TEST: a fine-heading picture is drawn directly; -1 matches none of the mirroring cases below.
+        if (Draw_Fine_Heading_Frame_(anim, ship_idx, 0)) {
+            dir_group = -1;
         }
 
         switch (dir_group) {
@@ -2259,6 +2315,19 @@ namespace CMBTDRW1 {
         if (quadrant <= 0) {
             quadrant = 0;
         }
+        // LOOK TEST: a fine-heading picture is drawn directly; -1 matches none of the mirroring cases below.
+        bool look_test_camera_has_ship = false;
+        {
+            const bool engines_running = CMBTFIR2::Combat_Ship_Done(ship_idx) == 0 && MOX::combat_data[ship_idx].is_captured == 0;
+            const int16_t engine_step = engines_running ? frame_idx : int16_t{0};
+            if (Draw_Fine_Heading_Frame_(anim, ship_idx, engine_step)) {
+                quadrant = -1;
+                // with the battlefield camera on, the ship is not drawn flat here: the camera stands it on the field
+                const float heading = ((float)facing_dir + look_test_turn_offset[ship_idx]) * (3.14159265358979f / 8.0f);
+                look_test_camera_has_ship = battle_cam::Add_Ship(ship_idx, static_cast<int16_t>(x_offset + draw_x + anim->width / 2),
+                    static_cast<int16_t>(y_offset + draw_y + anim->height / 2), engine_step, heading, look_test_roll[ship_idx]);
+            }
+        }
 
         switch (quadrant) {
             case 0: {
@@ -2339,7 +2408,9 @@ namespace CMBTDRW1 {
             CMBTFIRE::Draw_Energy_Absorber(ship_idx, draw_x, draw_y);
         }
 
-        animate::Draw(x_offset + draw_x, y_offset + draw_y, MOX::draw_ship_bitmap);
+        if (!look_test_camera_has_ship) {
+            animate::Draw(x_offset + draw_x, y_offset + draw_y, MOX::draw_ship_bitmap);
+        }
 
         if (CMBTMOV1::Ship_Is_In_Stasis(ship_idx)) {
             CMBTSPEC::Draw_Stasis_Ball(ship_idx, 100, 0, 0);

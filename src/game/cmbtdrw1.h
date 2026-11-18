@@ -15,6 +15,11 @@ namespace CMBTDRW1 {
     extern s_animation_header* board_left_button_seg;
     extern s_animation_header* board_right_button_seg;
 
+    // LOOK TEST (local patch, not upstream): see cmbtdrw1.cpp.
+    extern float look_test_turn_offset[MAX_COMBAT_SHIPS];
+    extern float look_test_roll[MAX_COMBAT_SHIPS];
+    bool Look_Test_Smooth_Turns(int16_t ship_idx);
+
     void __cdecl Detailed_View_Ship(int16_t ship_idx);
 
     void __cdecl Draw_Board_Popup();

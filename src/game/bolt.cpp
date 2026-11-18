@@ -1,5 +1,7 @@
 #include "pch.h"
 
+#include "game/battle_cam.h"
+
 namespace bolt {
     int16_t head_wide_bolts[192] = {
         0,
@@ -395,6 +397,7 @@ namespace bolt {
         int16_t x1, int16_t y1, int16_t x2, int16_t y2, int16_t palette_base, int16_t palette_span, int16_t color_jitter_chance, int16_t color_jitter_range, uint16_t sparkle_phase, int16_t legacy_core_flag, int16_t point_source_end, int16_t tip_highlight, int16_t full_core_gradient_flag, int16_t apply_sparkles, int16_t legacy_side_flag, int16_t core_max_offset, int16_t core_min_offset, int16_t mid_max_offset, int16_t mid_min_offset, int16_t outer_max_offset, int16_t outer_min_offset) {
         (void)legacy_core_flag;
         (void)legacy_side_flag;
+        battle_cam::Add_Beam(x1, y1, x2, y2, palette_base, palette_span, true); // LOOK TEST: for the part outside the game's window
 
         int16_t angle = angle::Get_Angle(x2 - x1, y2 - y1);
         int16_t direction_index = (((371 - angle) % 360) * 2) / 45;
@@ -605,6 +608,7 @@ namespace bolt {
 
     void __cdecl Bolt_Line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, int16_t palette_base, int16_t palette_span, int16_t color_jitter_chance, int16_t color_jitter_range, uint16_t sparkle_phase, int16_t draw_caps, int16_t legacy_aux_flag, int16_t tip_highlight, int16_t full_core_gradient_flag, int16_t apply_sparkles, int16_t suppress_side_strands, int16_t core_max_offset, int16_t core_min_offset, int16_t side_max_offset, int16_t side_min_offset) {
         (void)legacy_aux_flag;
+        battle_cam::Add_Beam(x1, y1, x2, y2, palette_base, palette_span, false); // LOOK TEST: for the part outside the game's window
 
         if (draw_caps == 1) {
             uint8_t c_cross = (uint8_t)(palette_base + 1);

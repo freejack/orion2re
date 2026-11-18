@@ -60,7 +60,25 @@ namespace CMBTMOV1 {
                 }
             }
 
-            if (MOX::super_fast_flag == 0 && CMBTDRW1::Ship_On_Screen(ship_idx) != 0) {
+            // LOOK TEST (local patch): a splat ship is drawn at its exact orientation, so instead of one frame per
+            // 22.5 degree step, keep drawing for the length of the step with the heading following the clock. The
+            // facing itself has already changed; only the drawn heading catches up.
+            const bool look_test_draw = MOX::super_fast_flag == 0 && CMBTDRW1::Ship_On_Screen(ship_idx) != 0;
+            const bool look_test_smooth = look_test_draw && CMBTDRW1::Look_Test_Smooth_Turns(ship_idx);
+            const Uint64 look_test_step_ms = 96;
+            const Uint64 look_test_step_started = SDL_GetTicks();
+            for (bool look_test_last = !look_test_draw; look_test_draw;) {
+                if (look_test_last) {
+                    break;
+                }
+                float look_test_part = 1.0f;
+                if (look_test_smooth) {
+                    look_test_part = std::min(1.0f, (float)(SDL_GetTicks() - look_test_step_started) / (float)look_test_step_ms);
+                }
+                look_test_last = look_test_part >= 1.0f;
+                if (look_test_smooth) {
+                    CMBTDRW1::look_test_turn_offset[ship_idx] = -(float)step * (1.0f - look_test_part);
+                }
                 video::Set_Page_Off();
                 for (int16_t i = 0; i < MOX::combat_total_ship_count; ++i) {
                     const int16_t tractor_target_idx = MOX::combat_data[i].special_cooldown == COMBAT_SHIP_NONE
@@ -84,8 +102,11 @@ namespace CMBTMOV1 {
                     }
                 }
                 RUSS::Mox_Sync_Update();
-                timer::Release_Time(1);
+                if (!look_test_smooth) {
+                    timer::Release_Time(1);
+                }
             }
+            CMBTDRW1::look_test_turn_offset[ship_idx] = 0.0f;
 
             for (int16_t i = 0; i < moved_count; ++i) {
                 if (ship->unit_status == 0 && MOX::missile[moved_missiles[i]].target_unit_idx == ship_idx) {

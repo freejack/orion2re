@@ -1,5 +1,7 @@
 #include "pch.h"
 
+#include "game/battle_cam.h"
+
 namespace CMBTFIRE {
     void __cdecl Draw_Energy_Absorber(int16_t ship_idx, int16_t x, int16_t y) {
         int16_t lbx_entry;
@@ -94,6 +96,43 @@ namespace CMBTFIRE {
         int16_t fire_result_flags = 0;
 
         struct_::Clear_Structure(beam_fx_entries, sizeof(beam_fx_entries));
+
+        // LOOK TEST: when a computer-controlled ship fires, the battlefield camera slides, and zooms out if it has
+        // to, until the firing ship and its target are both in view, and holds them there until the shots are over.
+        struct s_look_test_framing {
+            bool held = false;
+            ~s_look_test_framing() {
+                if (held) {
+                    battle_cam::End_Framing();
+                }
+            }
+        } look_test_framing;
+        if (battle_cam::Active() && MOX::apply_damage_to_planet != 0 && MOX::super_fast_flag == 0 && source_ship_idx > 0 &&
+            COMBAT1::Ship_Controlled_By_Computer(source_ship_idx) != 0) {
+            int16_t source_offset_x, source_offset_y, target_offset_x = 0, target_offset_y = 0;
+            COMBINIT::Ship_Center_Offsets(source_ship_idx, &source_offset_x, &source_offset_y);
+            const float source_x = (float)(MOX::combat_data[source_ship_idx].x * 20 + source_offset_x);
+            const float source_y = (float)(MOX::combat_data[source_ship_idx].y * 20 + source_offset_y);
+            float aim_x, aim_y;
+            if (flag == 0) {
+                COMBINIT::Ship_Center_Offsets(target_ship_idx, &target_offset_x, &target_offset_y);
+                aim_x = (float)(MOX::combat_data[target_ship_idx].x * 20 + target_offset_x);
+                aim_y = (float)(MOX::combat_data[target_ship_idx].y * 20 + target_offset_y);
+            } else {
+                aim_x = (float)MOX::missile[target_ship_idx].x;
+                aim_y = (float)MOX::missile[target_ship_idx].y;
+            }
+            battle_cam::Frame_Points(source_x, source_y, aim_x, aim_y);
+            look_test_framing.held = true;
+            // let the camera get there before anything fires: keep showing the battlefield for up to 0.7 seconds
+            const Uint64 framing_started = SDL_GetTicks();
+            do {
+                video::Set_Page_Off();
+                CMBTDRW1::Draw_Main_Combat_Screen();
+                RUSS::Mox_Sync_Update();
+                SDL_Delay(10);
+            } while (!battle_cam::Settled() && SDL_GetTicks() - framing_started < 700);
+        }
 
         if (flag == 0) {
             int16_t bearing = CMBTDRW1::Relative_Bearing(source_ship_idx, target_ship_idx);

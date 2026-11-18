@@ -1,4 +1,6 @@
 #include "pch.h"
+
+#include "game/battle_cam.h"
 #include "legacy_ids.h"
 
 namespace {
@@ -369,6 +371,7 @@ namespace COMBINIT {
     }
 
     int16_t __cdecl Tactical_Combat(int16_t* plr1_ships, int16_t plr1_ship_count, int16_t* plr2_ships, int16_t plr2_ship_count, int16_t star_idx, int16_t colony_idx, int16_t retreat_flag) {
+        battle_cam::Scope look_test_camera; // LOOK TEST: the battlefield camera acts for the length of this battle
         int8_t abort_tactical = 0;
         bool no_defender_ships = star_idx != MOX::NUM_STARS;
         int16_t has_tractor_beam = 0;

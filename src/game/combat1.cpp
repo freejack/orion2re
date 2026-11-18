@@ -1,5 +1,7 @@
 #include "pch.h"
 
+#include "game/battle_cam.h"
+
 #include "config/config_loader.h"
 #include "game/boarding.h"
 #include "combat1_turn_order.h"
@@ -637,6 +639,15 @@ namespace COMBAT1 {
                                     if (input_val == MOX::map_field) {
                                         COMBINIT::Snap_Center_Combat_Screen((MOX::map_x * 2) / 3, (MOX::map_y * 2 * MOX::combat_grid_height) / (3 * ORIGINAL_COMBAT_GRID_HEIGHT));
                                         input_val = 0;
+                                    }
+
+                                    // LOOK TEST: when the battlefield camera has been slid away from the game's window,
+                                    // bring the window along, so that orders and effects work around where the player looks.
+                                    {
+                                        int16_t camera_cell_x, camera_cell_y;
+                                        if (battle_cam::Wanted_Window(&camera_cell_x, &camera_cell_y)) {
+                                            COMBINIT::Snap_Center_Combat_Screen(camera_cell_x, camera_cell_y);
+                                        }
                                     }
 
                                     int16_t ptr_x = mouse::Pointer_X();
